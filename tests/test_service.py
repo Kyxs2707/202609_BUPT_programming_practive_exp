@@ -108,3 +108,34 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.service.list_tasks(), [])
         with self.assertRaises(TaskNotFoundError):
             self.service.get_task(task.id)
+
+    def test_empty_statistics_include_total_and_all_states(self):
+        self.assertEqual(self.service.get_statistics(), {
+            "total": 0, "todo": 0, "doing": 0, "done": 0,
+        })
+
+    def test_statistics_sum_all_states_without_changing_tasks(self):
+        for status in ("todo", "done", "doing", "done", "todo", "done"):
+            task = self.service.add_task("任务", "Alice")
+            self.service.update_task(task.id, status=status)
+        before = self.service.list_tasks()
+        statistics = self.service.get_statistics()
+        self.assertEqual(statistics, {"total": 6, "todo": 2, "doing": 1, "done": 3})
+        self.assertEqual(statistics["total"], sum(statistics[status] for status in STATUSES))
+        for count in statistics.values():
+            self.assertIs(type(count), int)
+        self.assertEqual(self.service.list_tasks(), before)
+
+    def test_statistics_follow_status_changes_and_deletions(self):
+        task = self.service.add_task("待办任务")
+        self.assertEqual(self.service.get_statistics(), {
+            "total": 1, "todo": 1, "doing": 0, "done": 0,
+        })
+        self.service.update_task(task.id, status="done")
+        self.assertEqual(self.service.get_statistics(), {
+            "total": 1, "todo": 0, "doing": 0, "done": 1,
+        })
+        self.service.delete_task(task.id)
+        self.assertEqual(self.service.get_statistics(), {
+            "total": 0, "todo": 0, "doing": 0, "done": 0,
+        })

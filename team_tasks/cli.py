@@ -41,6 +41,8 @@ def build_parser() -> argparse.ArgumentParser:
     listing.add_argument("--assignee", help="按负责人精确筛选")
     listing.add_argument("--json", action="store_true", help="以 JSON 数组输出任务列表")
 
+    commands.add_parser("stats", help="统计任务总数及各状态数量")
+
     show = commands.add_parser("show", help="查看单个任务")
     show.add_argument("task_id", type=_positive_id, metavar="ID")
 
@@ -94,6 +96,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                         print(f"{task.id}\t{task.title}\t{task.assignee or '未分配'}\t{task.status}")
                 else:
                     print("暂无任务。")
+            elif args.command == "stats":
+                statistics = service.get_statistics()
+                for key in ("total", *STATUSES):
+                    print(f"{key}: {statistics[key]}")
             elif args.command == "show":
                 _show_task(service.get_task(args.task_id))
             elif args.command == "update":

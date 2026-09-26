@@ -3,7 +3,7 @@ BUPT 2025-2026学年 大三上学期 程序设计实践——实验
 
 ## 团队任务管理器 · GitHub 双人协作 Demo
 
-一个小型 Python 命令行项目，用于练习需求拆分、Issue、分支开发、Pull Request、交叉评审、自动测试和冲突处理。基础版本已经实现任务的增删改查与筛选；扩展练习 A 的 JSON 列表输出已实现，练习 B 的状态统计仍待完成。
+一个小型 Python 命令行项目，用于练习需求拆分、Issue、分支开发、Pull Request、交叉评审、自动测试和冲突处理。基础版本已经实现任务的增删改查与筛选；扩展练习 A 的 JSON 列表输出和练习 B 的状态统计均已实现。
 
 **所有 Git 命令都由你手动执行。** 助手负责项目文件和 Python 验证，Git 操作步骤见[双人协作指南](docs/collaboration.md)。也可使用两个独立克隆目录模拟两位成员。
 
@@ -54,6 +54,7 @@ python -m unittest discover -s tests -v
 | --- | --- |
 | `add TITLE [--assignee NAME]` | 创建任务，默认状态 `todo` |
 | `list [--json] [--status STATUS] [--assignee NAME]` | 筛选任务，按 ID 升序显示，可输出 JSON 数组 |
+| `stats` | 统计当前数据库的任务总数及三种状态的数量 |
 | `show ID` | 查看单条任务 |
 | `update ID [--title TITLE] [--assignee NAME] [--status STATUS]` | 更新至少一个字段 |
 | `delete ID` | 删除任务 |
@@ -68,6 +69,24 @@ python -m team_tasks list --json --status doing --assignee Alice
 ```
 
 成功时 stdout 只输出 JSON 数组，每条任务包含 `id`（整数）、`title`、`assignee`、`status`。中文直接显示，未分配负责人为 `null`，无任务或无匹配结果时输出 `[]`。不加 `--json` 时保留原文本输出；错误仍写到 stderr，参数错误退出码为 2，业务或存储错误为 1。
+
+查看默认或指定数据库的统计结果：
+
+```console
+python -m team_tasks stats
+python -m team_tasks --db .data/demo.db stats
+```
+
+输出固定四行，按 `total`、`todo`、`doing`、`done` 排列。例如三种状态各有一条任务时：
+
+```text
+total: 3
+todo: 1
+doing: 1
+done: 1
+```
+
+`total` 为三种状态数量之和；空数据库四项均为 0，缺失的状态也显示 0。统计覆盖当前数据库的全部任务，不接受筛选或 `--json` 参数，不修改已有任务数据；数据库不存在时仍按通用约定初始化空库，数据库错误仍写到 stderr 并退出 1。
 
 ```text
 team_tasks/   命令行层 → 业务层 → SQLite 存储层，以及共享模型
@@ -85,7 +104,7 @@ docs/         需求、架构、接口、测试及协作演练文档
 | [接口说明](docs/interfaces.md) | 命令、输出、退出码和内部接口 |
 | [贡献规范](CONTRIBUTING.md) | 分工、分支、提交、评审及文档维护 |
 | [双人协作指南](docs/collaboration.md) | 从首次提交到 PR 合并，以及冲突演练 |
-| [练习任务卡](docs/exercises.md) | A 的 `list --json` 已实现，待 PR / CI / 评审；B 的 `stats` 未实现 |
+| [练习任务卡](docs/exercises.md) | A 的 `list --json` 和 B 的 `stats` 已实现，协作验收进度见任务卡 |
 | [测试说明](docs/testing.md) | 测试分层、运行方法、CI 和故障定位 |
 
 ## 许可证

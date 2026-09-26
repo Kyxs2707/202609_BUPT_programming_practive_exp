@@ -16,15 +16,15 @@ python -m unittest discover -s tests -p test_repository.py -v
 python -m unittest discover -s tests -p test_cli.py -v
 ```
 
-基础版本包含 37 个测试方法；完成 JSON 列表输出后，当前共 41 个测试方法，带 `subTest` 的方法还验证多组输入。后续新增练习功能时，测试数量应随实际覆盖增加，不将固定数量作为通过条件。
+基础版本包含 37 个测试方法；JSON 列表输出完成后为 41 个，状态统计新增 12 个，当前共 53 个测试方法，带 `subTest` 的方法还验证多组输入。后续新增功能时，测试数量应随实际覆盖增加，不将固定数量作为通过条件。
 
 ## 测试层次
 
 | 测试文件 | 验证内容 |
 | --- | --- |
-| `tests/test_service.py` | 标题、负责人、状态、ID 校验，部分更新，清除负责人，缺失记录及删除 |
-| `tests/test_repository.py` | 自动建库、参数化存储、筛选排序、跨连接持久化、删除后 ID 不复用、事务回滚及存储失败 |
-| `tests/test_cli.py` | 独立进程运行、完整生命周期、文本与 JSON 列表、组合筛选和排序、空结果、输出与退出码、帮助无副作用、中文和带空格路径、损坏数据库 |
+| `tests/test_service.py` | 标题、负责人、状态、ID 校验，部分更新，清除负责人，缺失记录及删除，统计总数及更新、删除后的计数 |
+| `tests/test_repository.py` | 自动建库、参数化存储、筛选排序、跨连接持久化、删除后 ID 不复用、事务回滚、状态聚合及补零、存储失败 |
+| `tests/test_cli.py` | 独立进程运行、完整生命周期、文本与 JSON 列表、组合筛选和排序、统计四行输出、空结果、输出与退出码、帮助无副作用、中文和带空格路径、损坏数据库 |
 
 业务和存储测试使用临时 SQLite 文件。命令行测试以 `sys.executable` 启动独立进程，工作目录和数据库都放入临时目录，借助 `PYTHONPATH` 定位源码；子进程输出统一使用 UTF-8，并设置超时。这样既能检查真实命令，也不会污染个人 `.data/`。
 
@@ -41,6 +41,11 @@ python -m unittest discover -s tests -p test_cli.py -v
 9. `list --json` 的 stdout 可由 `json.loads` 整体解析，四个字段及其类型正确；中文直接显示，未分配负责人解析为 `None`，双引号、反斜杠、换行和制表符可正确还原，断言不依赖 JSON 缩进。
 10. JSON 模式支持状态、负责人单独及组合筛选，保留去除首尾空白、区分大小写的规则，并按 ID 升序输出；空库及无匹配结果均输出 `[]`。
 11. JSON 模式的参数错误退出 2，空负责人筛选和损坏数据库退出 1；错误只写到 stderr，stdout 为空，损坏文件保持原内容。不加 `--json` 时，表头、制表符、`未分配` 及 `暂无任务。` 保持原样。
+12. `count_by_status()` 返回三种状态的整数计数，空库及缺失状态补 0；重复标题及未分配负责人也计入总数。查询失败转换为 `StorageError`。
+13. `get_statistics()` 增加 `total`，其值为三种状态计数之和。存储、业务、命令行三层均验证状态更新、删除后计数的变化。
+14. 独立进程的 `stats` 输出严格为 `total`、`todo`、`doing`、`done` 四行，空库全部为 0，成功退出 0；统计前后比较 JSON 列表和数据库文件内容，确认任务数据不变。
+15. 默认库与指定库的统计相互独立，`--db` 支持绝对及相对路径（含中文和空格）；`stats --help` 不创建数据库，筛选参数、`--json`、多余位置参数或放错位置的 `--db` 退出 2。
+16. `stats` 的数据库损坏、父路径被普通文件占用及查询失败（表中缺少 `status` 字段）均退出 1，stdout 为空，stderr 无调用栈，已有文件保持原内容。
 
 不要用“测试成功导入模块”替代行为测试，也不要为了让测试通过而删掉失败断言。练习任务需新增针对输出或业务结果的断言。
 
@@ -55,7 +60,7 @@ python -m unittest discover -s tests -p test_cli.py -v
 
 使用 GitHub 托管 runner，工作流权限为 `contents: read`；无需密钥、数据库服务或第三方 Python 包。一个组合失败时其他组合继续运行，便于发现平台差异。
 
-当前本地验收使用 Windows / Python 3.13。其他组合的真实结果须在用户推送、创建 PR 后到 Actions 或 PR Checks 中确认。初始化工作流进入默认分支后，可从 Actions 页面手动运行。
+当前本地验收使用 Windows / Python 3.13.5，53 项测试全部通过，包含成员 A 的 JSON 功能回归。其他组合的真实结果须在用户推送、创建 PR 后到 Actions 或 PR Checks 中确认；用户同步远程 `main` 后应重新运行全部测试。初始化工作流进入默认分支后，可从 Actions 页面手动运行。
 
 配置参考：[GitHub 官方 Python CI 指南](https://docs.github.com/en/actions/tutorials/build-and-test-code/python)。
 

@@ -2,6 +2,7 @@
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -43,13 +44,17 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("Traceback", result.stderr)
 
     def test_help_does_not_create_database(self):
-        for arguments in (("--help",), ("update", "--help"), ("list", "--help")):
+        for arguments in (
+            ("--help",), ("update", "--help"), ("list", "--help"), ("stats", "--help"),
+        ):
             with self.subTest(arguments=arguments):
                 result = self.run_cli(*arguments, default_db=True)
                 self.assert_success(result)
                 self.assertIn("--", result.stdout)
                 if arguments[0] == "list":
                     self.assertIn("--json", result.stdout)
+                if arguments[0] in ("--help", "stats"):
+                    self.assertIn("stats", result.stdout)
         self.assertFalse((self.directory / ".data").exists())
 
     def test_default_database_is_relative_to_working_directory(self):
@@ -163,6 +168,75 @@ class CliTests(unittest.TestCase):
         self.assert_success(result)
         self.assertEqual(result.stdout.strip(), "暂无任务。")
 
+    def test_empty_stats_is_successful(self):
+        result = self.run_cli("stats")
+        self.assert_success(result)
+        self.assertEqual(result.stdout, "total: 0\ntodo: 0\ndoing: 0\ndone: 0\n")
+
+    def test_stats_count_mixed_states_without_changing_tasks(self):
+        for task_id, status in enumerate(
+            ("todo", "done", "doing", "done", "todo", "done"), start=1,
+        ):
+            self.assert_success(self.run_cli("add", f"任务{task_id}"))
+            if status != "todo":
+                self.assert_success(self.run_cli("update", str(task_id), "--status", status))
+        before = self.run_cli("list", "--json")
+        self.assert_success(before)
+        contents = self.db.read_bytes()
+        result = self.run_cli("stats")
+        self.assert_success(result)
+        self.assertEqual(result.stdout, "total: 6\ntodo: 2\ndoing: 1\ndone: 3\n")
+        self.assertEqual(self.db.read_bytes(), contents)
+        after = self.run_cli("list", "--json")
+        self.assert_success(after)
+        self.assertEqual(json.loads(after.stdout), json.loads(before.stdout))
+
+    def test_stats_follow_updates_and_deletions(self):
+        self.assert_success(self.run_cli("add", "任务一"))
+        self.assert_success(self.run_cli("add", "任务二"))
+        cases = (
+            (("update", "1", "--status", "doing"), "total: 2\ntodo: 1\ndoing: 1\ndone: 0\n"),
+            (("update", "2", "--status", "done"), "total: 2\ntodo: 0\ndoing: 1\ndone: 1\n"),
+            (("update", "1", "--status", "done"), "total: 2\ntodo: 0\ndoing: 0\ndone: 2\n"),
+            (("delete", "2"), "total: 1\ntodo: 0\ndoing: 0\ndone: 1\n"),
+            (("delete", "1"), "total: 0\ntodo: 0\ndoing: 0\ndone: 0\n"),
+        )
+        for arguments, expected in cases:
+            with self.subTest(arguments=arguments):
+                self.assert_success(self.run_cli(*arguments))
+                result = self.run_cli("stats")
+                self.assert_success(result)
+                self.assertEqual(result.stdout, expected)
+
+    def test_stats_use_selected_database(self):
+        self.assert_success(self.run_cli("add", "默认库任务", default_db=True))
+        self.assert_success(self.run_cli("add", "指定库任务"))
+        self.assert_success(self.run_cli("update", "1", "--status", "doing"))
+        result = self.run_cli("stats", default_db=True)
+        self.assert_success(result)
+        self.assertEqual(result.stdout, "total: 1\ntodo: 1\ndoing: 0\ndone: 0\n")
+        result = self.run_cli("stats")
+        self.assert_success(result)
+        self.assertEqual(result.stdout, "total: 1\ntodo: 0\ndoing: 1\ndone: 0\n")
+        relative_path = str(self.db.relative_to(self.directory))
+        result = self.run_cli("--db", relative_path, "stats", default_db=True)
+        self.assert_success(result)
+        self.assertEqual(result.stdout, "total: 1\ntodo: 0\ndoing: 1\ndone: 0\n")
+
+    def test_stats_query_failure_reports_storage_error(self):
+        self.db.parent.mkdir()
+        connection = sqlite3.connect(self.db)
+        try:
+            with connection:
+                connection.execute("CREATE TABLE tasks (id INTEGER PRIMARY KEY)")
+        finally:
+            connection.close()
+        contents = self.db.read_bytes()
+        result = self.run_cli("stats")
+        self.assert_failure(result, 1)
+        self.assertIn("错误：数据库操作失败", result.stderr)
+        self.assertEqual(self.db.read_bytes(), contents)
+
     def test_invalid_arguments_exit_two_without_creating_database(self):
         cases = (
             (), ("unknown",), ("add",), ("show", "abc"), ("show", "0"),
@@ -172,6 +246,8 @@ class CliTests(unittest.TestCase):
             ("list", "--json", "--status", "invalid"),
             ("list", "--json", "--status"), ("list", "--json", "--assignee"),
             ("list", "--json", "--unknown"),
+            ("stats", "--status", "todo"), ("stats", "--assignee", "Alice"),
+            ("stats", "--json"), ("stats", "1"), ("stats", "--db", str(self.db)),
         )
         for arguments in cases:
             with self.subTest(arguments=arguments):
@@ -220,16 +296,18 @@ class CliTests(unittest.TestCase):
     def test_corrupt_database_reports_error_without_traceback(self):
         self.db.parent.mkdir()
         self.db.write_bytes(b"invalid database contents")
-        for options in ((), ("--json",)):
-            with self.subTest(options=options):
-                result = self.run_cli("list", *options)
+        for arguments in (("list",), ("list", "--json"), ("stats",)):
+            with self.subTest(arguments=arguments):
+                result = self.run_cli(*arguments)
                 self.assert_failure(result, 1)
                 self.assertIn("无法打开或初始化数据库", result.stderr)
                 self.assertEqual(self.db.read_bytes(), b"invalid database contents")
 
     def test_file_in_parent_path_reports_storage_error(self):
         self.db.parent.write_text("keep", encoding="utf-8")
-        result = self.run_cli("add", "任务")
-        self.assert_failure(result, 1)
-        self.assertIn("无法打开或初始化数据库", result.stderr)
-        self.assertEqual(self.db.parent.read_text(encoding="utf-8"), "keep")
+        for arguments in (("add", "任务"), ("stats",)):
+            with self.subTest(arguments=arguments):
+                result = self.run_cli(*arguments)
+                self.assert_failure(result, 1)
+                self.assertIn("无法打开或初始化数据库", result.stderr)
+                self.assertEqual(self.db.parent.read_text(encoding="utf-8"), "keep")
