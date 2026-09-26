@@ -73,6 +73,35 @@ ID	标题	负责人	状态
 
 错误仍仅输出到 stderr，stdout 为空，不输出 JSON 错误对象或 `[]`。例如 `list --json --status invalid` 退出 2，`list --json --assignee=` 或数据库损坏退出 1。
 
+### stats
+
+```console
+python -m team_tasks stats
+python -m team_tasks --db .data/demo.db stats
+```
+
+统计所选数据库的全部任务，不接受 `--status`、`--assignee`、`--json` 或位置参数。成功时 stdout 固定输出四行，每行格式为 `键: 整数`，顺序为 `total`、`todo`、`doing`、`done`，末行也带换行，不附带表头或额外说明。例如：
+
+```text
+total: 3
+todo: 1
+doing: 1
+done: 1
+```
+
+`total` 等于三种状态数量之和。空数据库输出如下，退出码仍为 0：
+
+```text
+total: 0
+todo: 0
+doing: 0
+done: 0
+```
+
+某种状态没有任务时保留对应行并显示 0。每次调用读取当前计数，状态修改或任务删除后结果随之变化；统计不会修改已有任务数据。数据库不存在时，沿用自动创建父目录及空表的约定。
+
+数据库打开、初始化或查询失败时，只向 stderr 输出 `错误：…`，stdout 为空，退出码为 1。提供不支持的参数属于参数错误，退出码为 2，不打开数据库。`stats --help` 显示帮助，也不创建数据库。
+
 ### show
 
 ```console
@@ -112,9 +141,9 @@ python -m team_tasks delete 1
 
 | 退出码 | 含义 | 例子 |
 | --- | --- | --- |
-| 0 | 成功，包含空列表和帮助 | `list`、`--help` |
+| 0 | 成功，包含空列表、空库统计和帮助 | `list`、`stats`、`--help` |
 | 1 | 业务或存储错误 | 空标题、任务不存在、数据库文件损坏 |
-| 2 | 命令行参数错误 | 未知命令、无效状态、非法 ID、缺少更新字段 |
+| 2 | 命令行参数错误 | 未知命令、无效状态、非法 ID、缺少更新字段、`stats --status todo` |
 
 ```console
 python -m team_tasks add "   "
@@ -146,6 +175,7 @@ STATUSES = ("todo", "doing", "done")
 | --- | --- | --- |
 | `add_task(title, assignee=None)` | `Task` | 校验后创建 |
 | `list_tasks(*, status=None, assignee=None)` | `list[Task]` | `None` 表示不筛选，空列表合法 |
+| `get_statistics()` | `dict[str, int]` | 调用 `count_by_status()`，返回三种状态的计数并增加它们之和 `total` |
 | `get_task(task_id)` | `Task` | 不存在抛出 `TaskNotFoundError` |
 | `update_task(task_id, *, title=None, assignee=None, status=None)` | `Task` | `None` 表示保留，负责人传 `""` 表示清空 |
 | `delete_task(task_id)` | `None` | 不存在抛出 `TaskNotFoundError` |
@@ -160,12 +190,13 @@ STATUSES = ("todo", "doing", "done")
 | --- | --- | --- |
 | `create(title, assignee)` | `Task` | 保存已校验值，生成 ID，状态为 `todo` |
 | `list_tasks(*, status=None, assignee=None)` | `list[Task]` | AND 筛选、ID 升序 |
+| `count_by_status()` | `dict[str, int]` | 用 SQL `GROUP BY` 统计，始终包含 `todo`、`doing`、`done` 三个键，缺失状态补 0 |
 | `get(task_id)` | `Task \| None` | 不存在时返回 `None` |
 | `update(task)` | `bool` | 保存对象全部可变字段；不存在返回 `False` |
 | `delete(task_id)` | `bool` | 有记录被删除返回 `True` |
 
-存储层负责 SQL、事务与错误转换，不负责用户文本的清理。调用方应先经过业务层。
+存储层负责 SQL、事务与错误转换，不负责用户文本的清理。调用方应先经过业务层。`count_by_status()` 不包含 `total`，也不接受筛选参数；查询失败抛出 `StorageError`。
 
 ## 扩展练习的接口状态
 
-`list --json` 已实现，接口见上文；`stats` **未实现**。验收进度及统计命令的预定行为见[练习任务卡](exercises.md)。
+`list --json` 和 `stats` 均已实现，接口见上文。实现与协作验收进度见[练习任务卡](exercises.md)。

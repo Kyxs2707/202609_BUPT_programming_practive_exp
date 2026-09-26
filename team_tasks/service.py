@@ -52,6 +52,10 @@ class TaskService:
                 raise ValidationError("筛选负责人不能为空。")
         return self._repository.list_tasks(status=status, assignee=assignee)
 
+    def get_statistics(self) -> dict[str, int]:
+        counts = self._repository.count_by_status()
+        return {"total": sum(counts.values()), **counts}
+
     def get_task(self, task_id: int) -> Task:
         task = self._repository.get(self._task_id(task_id))
         if task is None:

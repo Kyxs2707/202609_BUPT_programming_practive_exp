@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Iterator
 
 from .errors import StorageError
-from .models import Task
+from .models import STATUSES, Task
 
 
 class TaskRepository:
@@ -88,6 +88,16 @@ class TaskRepository:
         with self._transaction() as connection:
             rows = connection.execute(query, parameters).fetchall()
         return [self._to_task(row) for row in rows]
+
+    def count_by_status(self) -> dict[str, int]:
+        counts = {status: 0 for status in STATUSES}
+        with self._transaction() as connection:
+            rows = connection.execute(
+                "SELECT status, COUNT(*) AS count FROM tasks GROUP BY status"
+            ).fetchall()
+        for row in rows:
+            counts[row["status"]] = row["count"]
+        return counts
 
     def get(self, task_id: int) -> Task | None:
         with self._transaction() as connection:

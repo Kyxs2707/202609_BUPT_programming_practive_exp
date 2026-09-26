@@ -49,6 +49,44 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(self.repository.get(task.id), updated)
         self.assertFalse(self.repository.update(replace(updated, id=99)))
 
+    def test_count_by_status_includes_zeros_for_empty_database(self):
+        self.assertEqual(self.repository.count_by_status(), {
+            "todo": 0, "doing": 0, "done": 0,
+        })
+
+    def test_count_by_status_counts_all_tasks_without_changing_them(self):
+        for status in ("todo", "done", "doing", "done", "todo", "done"):
+            task = self.repository.create("重复标题", None)
+            self.repository.update(replace(task, status=status))
+        before = self.repository.list_tasks()
+        counts = self.repository.count_by_status()
+        self.assertEqual(counts, {"todo": 2, "doing": 1, "done": 3})
+        for count in counts.values():
+            self.assertIs(type(count), int)
+        self.assertEqual(self.repository.list_tasks(), before)
+
+    def test_count_by_status_tracks_updates_deletions_and_missing_states(self):
+        task = self.repository.create("待办任务", "Alice")
+        self.assertEqual(self.repository.count_by_status(), {
+            "todo": 1, "doing": 0, "done": 0,
+        })
+        self.assertTrue(self.repository.update(replace(task, status="doing")))
+        self.assertEqual(self.repository.count_by_status(), {
+            "todo": 0, "doing": 1, "done": 0,
+        })
+        self.assertTrue(self.repository.delete(task.id))
+        self.assertEqual(self.repository.count_by_status(), {
+            "todo": 0, "doing": 0, "done": 0,
+        })
+
+    def test_count_by_status_converts_query_errors(self):
+        connection = sqlite3.connect(self.path)
+        self.addCleanup(connection.close)
+        with connection:
+            connection.execute("DROP TABLE tasks")
+        with self.assertRaisesRegex(StorageError, "数据库操作失败"):
+            self.repository.count_by_status()
+
     def test_delete_does_not_reuse_ids(self):
         first = self.repository.create("任务一", None)
         self.assertTrue(self.repository.delete(first.id))
