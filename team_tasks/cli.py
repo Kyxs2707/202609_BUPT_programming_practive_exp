@@ -1,6 +1,7 @@
 """命令行适配层：参数、展示和退出码。"""
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Sequence
@@ -38,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     listing = commands.add_parser("list", help="查看或筛选任务")
     listing.add_argument("--status", choices=STATUSES, help="按状态筛选")
     listing.add_argument("--assignee", help="按负责人精确筛选")
+    listing.add_argument("--json", action="store_true", help="以 JSON 数组输出任务列表")
 
     show = commands.add_parser("show", help="查看单个任务")
     show.add_argument("task_id", type=_positive_id, metavar="ID")
@@ -76,7 +78,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"已创建任务 #{task.id}。")
             elif args.command == "list":
                 tasks = service.list_tasks(status=args.status, assignee=args.assignee)
-                if tasks:
+                if args.json:
+                    print(json.dumps([
+                        {
+                            "id": task.id,
+                            "title": task.title,
+                            "assignee": task.assignee,
+                            "status": task.status,
+                        }
+                        for task in tasks
+                    ], ensure_ascii=False))
+                elif tasks:
                     print("ID\t标题\t负责人\t状态")
                     for task in tasks:
                         print(f"{task.id}\t{task.title}\t{task.assignee or '未分配'}\t{task.status}")

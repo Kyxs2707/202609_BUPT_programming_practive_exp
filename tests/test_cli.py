@@ -1,5 +1,6 @@
 """通过独立 Python 进程验证命令、输出、退出码及跨进程持久化。"""
 
+import json
 import os
 import subprocess
 import sys
@@ -42,11 +43,13 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("Traceback", result.stderr)
 
     def test_help_does_not_create_database(self):
-        for arguments in (("--help",), ("update", "--help")):
+        for arguments in (("--help",), ("update", "--help"), ("list", "--help")):
             with self.subTest(arguments=arguments):
                 result = self.run_cli(*arguments, default_db=True)
                 self.assert_success(result)
                 self.assertIn("--", result.stdout)
+                if arguments[0] == "list":
+                    self.assertIn("--json", result.stdout)
         self.assertFalse((self.directory / ".data").exists())
 
     def test_default_database_is_relative_to_working_directory(self):
@@ -76,13 +79,84 @@ class CliTests(unittest.TestCase):
         self.assert_success(self.run_cli("add", "任务一", "--assignee", "Alice"))
         self.assert_success(self.run_cli("add", "任务二", "--assignee", "Bob"))
         self.assert_success(self.run_cli("add", "任务三", "--assignee", "Alice"))
+        self.assert_success(self.run_cli("add", "任务四"))
         self.assert_success(self.run_cli("update", "3", "--status", "done"))
         result = self.run_cli("list")
         self.assert_success(result)
-        self.assertEqual([line.split("\t")[0] for line in result.stdout.splitlines()[1:]], ["1", "2", "3"])
+        self.assertEqual(result.stdout.splitlines(), [
+            "ID\t标题\t负责人\t状态",
+            "1\t任务一\tAlice\ttodo",
+            "2\t任务二\tBob\ttodo",
+            "3\t任务三\tAlice\tdone",
+            "4\t任务四\t未分配\ttodo",
+        ])
         result = self.run_cli("list", "--status", "todo", "--assignee", "Alice")
         self.assert_success(result)
         self.assertEqual(result.stdout.splitlines()[1:], ["1\t任务一\tAlice\ttodo"])
+        result = self.run_cli("list", "--status", "doing")
+        self.assert_success(result)
+        self.assertEqual(result.stdout.strip(), "暂无任务。")
+
+    def test_list_json_preserves_fields_types_and_unicode(self):
+        title = '检查"输出"与\\路径\n第二行\t内容'
+        self.assert_success(self.run_cli("add", title, "--assignee", "小明"))
+        self.assert_success(self.run_cli("add", "待分配任务"))
+        result = self.run_cli("list", "--json")
+        self.assert_success(result)
+        tasks = json.loads(result.stdout)
+        self.assertEqual(tasks, [
+            {"id": 1, "title": title, "assignee": "小明", "status": "todo"},
+            {"id": 2, "title": "待分配任务", "assignee": None, "status": "todo"},
+        ])
+        for task in tasks:
+            self.assertIs(type(task["id"]), int)
+        self.assertIn("检查", result.stdout)
+        self.assertIn("小明", result.stdout)
+        self.assertIn("待分配任务", result.stdout)
+
+    def test_list_json_combines_filters_and_orders_by_id(self):
+        for task_id, (assignee, status) in enumerate((
+            ("Alice", "doing"), ("Bob", "doing"), ("Alice", "todo"),
+            ("Alice", "doing"), ("Alice", "done"),
+        ), start=1):
+            self.assert_success(self.run_cli("add", f"任务{task_id}", "--assignee", assignee))
+            self.assert_success(self.run_cli("update", str(task_id), "--status", status))
+        cases = (
+            ((), [1, 2, 3, 4, 5]),
+            (("--status", "doing"), [1, 2, 4]),
+            (("--assignee", "Alice"), [1, 3, 4, 5]),
+            (("--status", "doing", "--assignee", "Alice"), [1, 4]),
+            (("--status", "doing", "--assignee", " Alice "), [1, 4]),
+            (("--assignee", "alice"), []),
+        )
+        for arguments, expected_ids in cases:
+            with self.subTest(arguments=arguments):
+                result = self.run_cli("list", "--json", *arguments)
+                self.assert_success(result)
+                tasks = json.loads(result.stdout)
+                self.assertEqual([task["id"] for task in tasks], expected_ids)
+                if "--status" in arguments:
+                    self.assertTrue(all(task["status"] == "doing" for task in tasks))
+                if "--assignee" in arguments:
+                    self.assertTrue(all(task["assignee"] == "Alice" for task in tasks))
+
+    def test_empty_json_list_is_successful(self):
+        result = self.run_cli("list", "--json")
+        self.assert_success(result)
+        self.assertEqual(json.loads(result.stdout), [])
+        self.assertEqual(result.stdout.strip(), "[]")
+
+    def test_json_list_without_matches_is_successful(self):
+        self.assert_success(self.run_cli("add", "已有任务", "--assignee", "Alice"))
+        for arguments in (
+            ("--status", "done"), ("--assignee", "Bob"),
+            ("--status", "doing", "--assignee", "Alice"),
+        ):
+            with self.subTest(arguments=arguments):
+                result = self.run_cli("list", *arguments, "--json")
+                self.assert_success(result)
+                self.assertEqual(json.loads(result.stdout), [])
+                self.assertEqual(result.stdout.strip(), "[]")
 
     def test_empty_list_is_successful(self):
         result = self.run_cli("list")
@@ -95,6 +169,9 @@ class CliTests(unittest.TestCase):
             ("delete", "-1"), ("show", str(2**63)),
             ("list", "--status", "invalid"), ("update", "1", "--status", "DONE"),
             ("update", "1"), ("list", "--unknown"),
+            ("list", "--json", "--status", "invalid"),
+            ("list", "--json", "--status"), ("list", "--json", "--assignee"),
+            ("list", "--json", "--unknown"),
         )
         for arguments in cases:
             with self.subTest(arguments=arguments):
@@ -133,17 +210,22 @@ class CliTests(unittest.TestCase):
         self.assertIn("负责人: Alice", result.stdout)
 
     def test_blank_assignee_filter_is_business_error(self):
-        result = self.run_cli("list", "--assignee=")
-        self.assert_failure(result, 1)
-        self.assertIn("筛选负责人不能为空", result.stderr)
+        for options in ((), ("--json",)):
+            for assignee in ("", "   "):
+                with self.subTest(options=options, assignee=assignee):
+                    result = self.run_cli("list", *options, f"--assignee={assignee}")
+                    self.assert_failure(result, 1)
+                    self.assertIn("筛选负责人不能为空", result.stderr)
 
     def test_corrupt_database_reports_error_without_traceback(self):
         self.db.parent.mkdir()
         self.db.write_bytes(b"invalid database contents")
-        result = self.run_cli("list")
-        self.assert_failure(result, 1)
-        self.assertIn("无法打开或初始化数据库", result.stderr)
-        self.assertEqual(self.db.read_bytes(), b"invalid database contents")
+        for options in ((), ("--json",)):
+            with self.subTest(options=options):
+                result = self.run_cli("list", *options)
+                self.assert_failure(result, 1)
+                self.assertIn("无法打开或初始化数据库", result.stderr)
+                self.assertEqual(self.db.read_bytes(), b"invalid database contents")
 
     def test_file_in_parent_path_reports_storage_error(self):
         self.db.parent.write_text("keep", encoding="utf-8")

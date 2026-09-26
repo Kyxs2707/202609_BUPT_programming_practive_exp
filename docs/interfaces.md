@@ -36,18 +36,42 @@ python -m team_tasks list
 python -m team_tasks list --status doing
 python -m team_tasks list --assignee Alice
 python -m team_tasks list --status doing --assignee Alice
+python -m team_tasks list --json
+python -m team_tasks list --json --status doing --assignee Alice
 ```
 
 `--status` 可取 `todo`、`doing`、`done`。负责人按去除首尾空白后的文本精确匹配，区分大小写；同时提供两个条件时取交集。空负责人筛选报业务错误。
 
-结果按 ID 升序，用制表符分隔列；示例如下，视觉列宽取决于终端：
+结果按 ID 升序。不加 `--json` 时，用制表符分隔列；示例如下，视觉列宽取决于终端：
 
 ```text
 ID	标题	负责人	状态
 1	完善协作指南	Alice	doing
 ```
 
-未分配负责人显示 `未分配`。无结果时只输出 `暂无任务。`，退出码仍为 0。
+文本模式下，未分配负责人显示 `未分配`。无结果时只输出 `暂无任务。`，退出码仍为 0。
+
+提供 `--json` 时，成功结果的 stdout 仅包含合法 JSON 数组，不附带表头或成功说明。示例（排版仅用于展示，不保证缩进或空格格式）：
+
+```json
+[
+  {"id": 1, "title": "完善协作指南", "assignee": "Alice", "status": "doing"},
+  {"id": 2, "title": "补充测试", "assignee": null, "status": "todo"}
+]
+```
+
+每个对象包含以下四个字段：
+
+| 字段 | JSON 类型 | 说明 |
+| --- | --- | --- |
+| `id` | 整数 | 任务 ID，数组按 ID 升序排列 |
+| `title` | 字符串 | 任务标题 |
+| `assignee` | 字符串或 `null` | 未分配负责人为 `null` |
+| `status` | 字符串 | `todo`、`doing`、`done` 之一 |
+
+中文直接显示，双引号、反斜杠、换行等按 JSON 规则转义。无任务或无匹配结果时输出 `[]`，退出码为 0。`--json` 可与任意已有筛选条件组合，筛选规则不变。
+
+错误仍仅输出到 stderr，stdout 为空，不输出 JSON 错误对象或 `[]`。例如 `list --json --status invalid` 退出 2，`list --json --assignee=` 或数据库损坏退出 1。
 
 ### show
 
@@ -144,4 +168,4 @@ STATUSES = ("todo", "doing", "done")
 
 ## 扩展练习的接口状态
 
-当前基础版本**没有** `list --json` 和 `stats`。预定行为和验收标准见[练习任务卡](exercises.md)；完成对应 PR 后再更新本接口文档。
+`list --json` 已实现，接口见上文；`stats` **未实现**。验收进度及统计命令的预定行为见[练习任务卡](exercises.md)。
